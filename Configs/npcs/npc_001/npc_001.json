@@ -1,0 +1,6 @@
+{
+    "id": "001",
+    "name": "小张",
+    "background": "npc_001_bg.txt",
+    "initial_location": "家"
+}

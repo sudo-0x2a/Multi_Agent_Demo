@@ -1,0 +1,6 @@
+{
+    "id": "002",
+    "name": "小红",
+    "background": "npc_002_bg.txt",
+    "initial_location": "医院"
+}

@@ -1,0 +1,14 @@
+{
+    "world_name": "demo_world",
+    "map_config": "Configs/map/map.json",
+    "characters": [
+        {
+            "id": "npc_001",
+            "config_path": "Configs/npcs/npc_001/npc_001.json"
+        },
+        {
+            "id": "npc_002",
+            "config_path": "Configs/npcs/npc_002/npc_002.json"
+        }
+    ]
+}
