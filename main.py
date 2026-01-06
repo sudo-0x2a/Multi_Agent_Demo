@@ -1,64 +1,61 @@
 """
-Multi-Agent Game Demo - Main Entry Point
+Multi-Agent Simulation - CLI Test Entry Point
 
-This demonstrates how to load a game world and create NPC agents.
+This module provides a command-line interface to run the multi-agent simulation
+without a web frontend. It is primarily used for testing and debugging the 
+agent logic and engine interactions.
 """
+
 import traceback
 from Engine import load_world
 from Agent.graph import NPCAgent
 
 def main():
-    """Main entry point for the game."""
-    print("=" * 50)
-    print("Multi-Agent Game Demo")
-    print("=" * 50)
+    """
+    Initializes the game world, creates NPC agents, and runs a test simulation.
+    """
+    print("=" * 60)
+    print("      MULTI-AGENT SIMULATION - CLI DEBUGGER")
+    print("=" * 60)
     print()
     
-    # Load the game world from configuration
-    print("Loading game world...")
+    # --- World Initialization ---
+    print("Initializing game world...")
     game_core, game_state, characters = load_world()
-    print()
+    game_core.initialize()
+    print("✓ World loaded successfully.\n")
     
-    # Display world information
-    print("=" * 50)
-    print("World Information")
-    print("=" * 50)
-    print(f"Map Locations: {', '.join(game_core.get_locations())}")
-    print(f"Total Characters: {len(characters)}")
-    print()
-    
-    # Display character information
-    print("Characters:")
+    # --- Display Environment Info ---
+    print("-" * 60)
+    print(" ENVIRONMENT OVERVIEW")
+    print("-" * 60)
+    print(f"Available Locations : {', '.join(game_core.get_locations())}")
+    print(f"Active Characters   : {len(characters)}")
     for char in characters:
-        print(f"  - {char.name} (ID: {char.id}) at {char.current_location}")
+        print(f"  • {char.name:<10} (ID: {char.id}) at {char.current_location}")
     print()
     
-    # Create NPC agents for each character
-    print("=" * 50)
-    print("Creating NPC Agents")
-    print("=" * 50)
+    # --- Agent Creation ---
+    print("-" * 60)
+    print(" AGENT INITIALIZATION")
+    print("-" * 60)
     agents = {}
-    # Create agents for both npc_001 and npc_002
+    # We create agents for NPC 001 (Xiao Zhang) and NPC 002 (Xiao Hong)
     for character in characters:
-        if character.id in ["001", "002"]:  # 小张 and 小红
+        if character.id in ["001", "002"]: 
             agent = NPCAgent(character, game_state)
             agents[character.id] = agent
-            print(f"✓ Created agent for {character.name}")
+            print(f"✓ Created IQ agent for {character.name}")
         else:
-            print(f"⊘ Skipped agent for {character.name}")
+            print(f"⊘ Skipping IQ agent for {character.name} (NPC Only)")
+    print("\nSimulation setup complete. Starting test run...")
     print()
     
-    print("=" * 50)
-    print("Game Setup Complete!")
-    print("=" * 50)
-    print(f"Total agents: {len(agents)}")
-    print()
-    
-    # Run test simulation for 小张
-    print("=" * 50)
-    print("Starting Test Simulation")
-    print("=" * 50)
-    print("Goal: 小张 should go to 医院 to check on 小明's situation, then go to ATM")
+    # --- Simulation Execution ---
+    print("=" * 60)
+    print(" MISSION START: PROJECT ATM")
+    print("=" * 60)
+    print("Objective: Xiao Zhang must visit Hospital, coordinate with Xiao Hong, then reach ATM.")
     print()
     
     run_test_simulation(game_core, game_state, characters, agents)
@@ -67,89 +64,84 @@ def main():
 
 
 def run_test_simulation(game_core, game_state, characters, agents):
-    """Run a test simulation for 小张 to reach 医院 and speak with 小红."""
+    """
+    Executes a turn-based simulation loop until an objective or turn limit is reached.
+    """
 
     def _invoke_agent(agent: NPCAgent, label: str) -> None:
-        """Invoke one agent once and print simplified logs."""
-        print(f"🤖 Action: {label} ({agent.character.name})")
+        """
+        Executes a single workflow turn for a specific agent and prints formatted output.
+        """
+        print(f"🤖 [NODE: {label}] Character: {agent.character.name}")
         
+        # Execute the LangGraph workflow
         result = agent.graph.invoke(
             {},
             {"configurable": {"thread_id": agent.character.id}},
         )
 
-        # Simplified Message Log
+        # Print activity logs from the agent's memory
         messages = result.get("messages", [])
         if messages:
-            print("   📜 Activity:")
+            print("   📜 Execution Trace:")
             for msg in messages:
                 role = msg.__class__.__name__.replace("Message", "")
                 content = msg.content
                 
                 if role == "Human":
-                    # For system feedback, maybe just show the [对话] if it exists
-                    # or a summary to keep it clean.
+                    # Display sensory input or environmental updates
                     if "[对话]" in content:
-                        # Extract the dialog part
                         dialog = content.split("[对话]")[-1].strip()
-                        print(f"      [Incoming]: {dialog}")
+                        print(f"      📥 [Received]: {dialog}")
                     else:
-                        # Environment update
                         loc_match = [line for line in content.split("\n") if "当前位置" in line]
                         loc_str = loc_match[0] if loc_match else "Status Update"
-                        print(f"      [System]: {loc_str}")
+                        print(f"      🌐 [System]: {loc_str}")
                 
                 elif role == "AI":
+                    # Display the agent's chosen action and reasoning
                     if hasattr(msg, "additional_kwargs") and "structured_output" in msg.additional_kwargs:
                         struct = msg.additional_kwargs["structured_output"]
                         content = str(struct.model_dump()) if hasattr(struct, "model_dump") else str(struct)
-                    print(f"      [Action]: {content}")
+                    print(f"      🚀 [Action]: {content}")
         
-        # State Summary
+        # Display updated status
         c = agent.character
-        print(f"   📊 State: Loc={c.current_location} | Status={c.activity_status} | Data={c.activity_data}")
+        print(f"   📊 Result: Loc={c.current_location} | Status={c.activity_status}")
         print()
 
-    # Agents
+    # Retrieve agents for the simulation loop
     zhang_agent = agents.get("001")
-    if not zhang_agent:
-        print("Error: Could not find agent for 小张 (001)")
-        return
     xiaohong_agent = agents.get("002")
-    if not xiaohong_agent:
-        print("Error: Could not find agent for 小红 (002)")
+    
+    if not zhang_agent or not xiaohong_agent:
+        print("Error: Missing primary agents (001 or 002). Aborting.")
         return
 
     zhang = zhang_agent.character
     max_turns = 30
     success = False
-    success_reported = False
 
-    # Standby cursor: npc002 only acts if there is a *new* dialogue addressed to her.
+    # Keeps track of events processed by Xiao Hong to avoid duplicate triggers
     xiaohong_wakeup_cursor = 0
 
-    print(f"Initial state: {zhang.name} at {zhang.current_location}")
+    print(f"Initial State: {zhang.name} is starting at {zhang.current_location}")
     print()
 
+    # --- Turn Loop ---
     for turn in range(1, max_turns + 1):
-        print("=" * 50)
-        print(f"Turn {turn}")
-        print("=" * 50)
+        print(f" [ TURN {turn} ] ".center(60, "="))
 
-        # ---- NPC001 acts every turn ----
+        # 1. Proactive Phase: Xiao Zhang (NPC001) always takes an action
         game_state.set_active_character(zhang.name)
-        print(f"[NPC001] Current location: {zhang.current_location}")
-        print(f"[NPC001] Available actions: {game_state.get_action_options()}")
-        print()
-
         try:
-            _invoke_agent(zhang_agent, label="NPC001")
+            _invoke_agent(zhang_agent, label="PROACTIVE_AGENT")
         except Exception as e:
-            print(f"❌ Error during NPC001 execution: {e}")
+            print(f"❌ NPC001 Error: {e}")
             traceback.print_exc()
             break
 
-        # ---- NPC002 standby: only act if NPC001 spoke to her ----
+        # 2. Reactive Phase: Xiao Hong (NPC002) only acts if triggered by a dialogue event
         new_events = game_core.event_log[xiaohong_wakeup_cursor :]
         should_wake_xiaohong = any(
             (ev.get("action") in ["说话", "开始说话", "继续说话", "结束说话"])
@@ -161,51 +153,41 @@ def run_test_simulation(game_core, game_state, characters, agents):
         )
 
         if should_wake_xiaohong:
-            print("[NPC002] Wake condition met: received a dialogue event. Acting once...")
+            print(f"🔔 reactive Trigger: {xiaohong_agent.character.name} detected incoming communication.")
             try:
-                _invoke_agent(xiaohong_agent, label="NPC002")
+                _invoke_agent(xiaohong_agent, label="REACTIVE_AGENT")
             except Exception as e:
-                print(f"❌ Error during NPC002 execution: {e}")
+                print(f"❌ NPC002 Error: {e}")
                 traceback.print_exc()
                 break
-        else:
-            print("[NPC002] Standby: no incoming dialogue addressed to 小红.")
-
-        # Move cursor forward regardless (prevents waking again on same old event)
+        
+        # Update cursor to mark events as processed
         xiaohong_wakeup_cursor = len(game_core.event_log)
 
-        # ---- Success criteria ----
-        print("\n🎯 Checking Success Criteria:")
-        print(f"   Location: {zhang.current_location} (need: ATM)")
-
+        # 3. Success Check: Has the target location been reached?
         reached_atm = zhang.current_location == "ATM"
-        
-        print(f"   Reached ATM: {'✓' if reached_atm else '✗'}")
-        print()
-
         if reached_atm:
             success = True
-            print("🎉 SUCCESS! Test completed successfully!")
-            print(f"   小张 reached ATM in {turn} turns")
+            print("\n" + " MISSION ACCOMPLISHED ".center(60, "🎉"))
+            print(f"Objective reached in {turn} turns.")
             break
 
-        print()
+    # --- Post-Simulation Report ---
+    print("\n" + "=" * 60)
+    print(" SIMULATION SUMMARY ")
+    print("=" * 60)
+    print(f"Overall Status : {'SUCCESS ✓' if success else 'FAILED ✗'}")
+    print(f"Total Duration : {turn} turns")
+    print(f"Final Position : {zhang.name} at {zhang.current_location}")
+    print(f"Total Actions  : {len(game_core.event_log)}")
+    print("-" * 60)
     
-    # Final summary
-    print("=" * 50)
-    print("Test Summary")
-    print("=" * 50)
-    print(f"Status: {'SUCCESS ✓' if success else 'INCOMPLETE ✗'}")
-    print(f"Total turns: {turn}")
-    print(f"Final location: {zhang.current_location}")
-    print(f"Total actions taken: {len(game_core.event_log)}")
-    print()
-    
-    print("Full Event Log:")
-    print("-" * 50)
+    print("Full Action Log History:")
     for i, event in enumerate(game_core.event_log, 1):
-        print(f"{i}. {event}")
-    print("-" * 50)
+        actor = event.get('actor', 'System')
+        action = event.get('action', 'Unknown')
+        print(f"  {i:02d}. [{actor}] {action}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

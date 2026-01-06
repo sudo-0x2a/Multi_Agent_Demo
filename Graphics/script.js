@@ -1,14 +1,17 @@
-// State
+/**
+ * Global Simulation State
+ * Main synchronisation object between the server and the UI.
+ */
 let state = {
-    map: {},
-    characters: [],
-    events: [],
-    turn: 0,
-    running: false,
+    map: {},        // Stores location coordinates { "Name": [x, y] }
+    characters: [], // List of active characters with their locations and status
+    events: [],     // chronological log of all simulation events
+    turn: 0,        // Current simulation step
+    running: false, // UI playback status
     initialized: false
 };
 
-// DOM Elements
+// --- DOM Reference Registry ---
 const startBtn = document.getElementById('startBtn');
 const stepBtn = document.getElementById('stepBtn');
 const resetBtn = document.getElementById('resetBtn');
@@ -17,35 +20,47 @@ const mapGrid = document.getElementById('mapGrid');
 const eventLog = document.getElementById('eventLog');
 
 
-// Agent colors
+/** 
+ * Design configuration for specific agents.
+ */
 const agentColors = {
-    '小张': '#4CAF50',
-    '小红': '#E91E63'
+    '小张': '#4CAF50', // Emerald Green
+    '小红': '#E91E63'  // Rose Pink
 };
 
-// Initialize
+/**
+ * Bootstraps the interface by fetching initial state and drawing the map.
+ */
 async function init() {
     await fetchState();
     renderMap();
     state.initialized = true;
 }
 
-// Fetch current state from API
+/**
+ * Synchronises the local 'state' object with the backend API.
+ * Updates all relevant UI components upon success.
+ */
 async function fetchState() {
     try {
         const response = await fetch('/api/state');
         const data = await response.json();
+
         state.map = data.map || {};
         state.characters = data.characters || [];
         state.events = data.events || [];
         state.turn = data.turn || 0;
+
         updateUI();
     } catch (error) {
-        console.error('Failed to fetch state:', error);
+        console.error('API Error: Failed to synchronise simulation state.', error);
     }
 }
 
-// Step simulation
+/**
+ * Triggers a single turn progression on the server.
+ * Disables interaction during the request to prevent race conditions.
+ */
 async function stepSimulation() {
     try {
         stepBtn.disabled = true;
@@ -56,76 +71,84 @@ async function stepSimulation() {
             await fetchState();
         }
 
+        // Handle termination state
         if (data.complete) {
             state.running = false;
             startBtn.textContent = '✓ Complete';
+            startBtn.classList.add('finished');
             startBtn.disabled = true;
             stepBtn.disabled = true;
         } else {
             stepBtn.disabled = false;
         }
     } catch (error) {
-        console.error('Step failed:', error);
+        console.error('Execution Error: Step command failed.', error);
         stepBtn.disabled = false;
     }
 }
 
-// Reset simulation
+/**
+ * Resets the entire simulation to T-0.
+ * Clears the localized history and visual logs.
+ */
 async function resetSimulation() {
     try {
         await fetch('/api/reset', { method: 'POST' });
         await fetchState();
+
         state.running = false;
         startBtn.textContent = '▶ Start';
+        startBtn.classList.remove('finished');
         startBtn.disabled = false;
         stepBtn.disabled = true;
         resetBtn.disabled = true;
+
+        // Wipe visual displays
         eventLog.innerHTML = '';
-        bubbleContainer.innerHTML = '';
     } catch (error) {
-        console.error('Reset failed:', error);
+        console.error('Reset Error: Failed to restore initial state.', error);
     }
 }
 
-// Render the map grid
+/**
+ * Dynamically constructs the interactive CSS grid based on the world map dimensions.
+ */
 function renderMap() {
     mapGrid.innerHTML = '';
 
-    // Calculate grid dimensions
     const locations = Object.entries(state.map);
     if (locations.length === 0) return;
 
+    // Calculate bounding box for the grid
     let maxX = 0, maxY = 0;
-    locations.forEach(([name, coords]) => {
+    locations.forEach(([_, coords]) => {
         maxX = Math.max(maxX, coords[0]);
         maxY = Math.max(maxY, coords[1]);
     });
 
+    // Set grid properties: fixed-size cells for consistency
     mapGrid.style.gridTemplateColumns = `repeat(${maxX + 1}, 140px)`;
     mapGrid.style.gridTemplateRows = `repeat(${maxY + 1}, 140px)`;
 
-    // Create grid cells
-    const grid = {};
+    const gridLayout = {};
     locations.forEach(([name, coords]) => {
-        grid[`${coords[0]},${coords[1]}`] = name;
+        gridLayout[`${coords[0]},${coords[1]}`] = name;
     });
 
-    // Render cells (row by row, top to bottom = high Y to low Y)
+    // Generate cells: rendering top-to-bottom relative to Y coordinates
     for (let y = maxY; y >= 0; y--) {
         for (let x = 0; x <= maxX; x++) {
             const cell = document.createElement('div');
             cell.className = 'map-cell';
-            cell.dataset.x = x;
-            cell.dataset.y = y;
 
-            const locationName = grid[`${x},${y}`];
+            const locationName = gridLayout[`${x},${y}`];
             if (locationName) {
                 cell.innerHTML = `
                     <div class="cell-name">${locationName}</div>
                     <div class="cell-agents" id="agents-${x}-${y}"></div>
                 `;
             } else {
-                cell.style.opacity = '0.3';
+                cell.className += ' empty-cell';
                 cell.innerHTML = '<div class="cell-name">-</div>';
             }
 
@@ -133,12 +156,14 @@ function renderMap() {
         }
     }
 
-    updateAgentPositions();
+    updateAgentTokens();
 }
 
-// Update agent positions on map
-function updateAgentPositions() {
-    // Clear all agent containers
+/**
+ * Places character icons in their respective grid cells based on current spatial data.
+ */
+function updateAgentTokens() {
+    // Purge current tokens
     document.querySelectorAll('.cell-agents').forEach(el => el.innerHTML = '');
 
     state.characters.forEach(char => {
@@ -148,71 +173,91 @@ function updateAgentPositions() {
             if (container) {
                 const token = document.createElement('div');
                 token.className = 'agent-token';
-                token.style.background = agentColors[char.name] || '#666';
+                token.style.backgroundColor = agentColors[char.name] || '#7f8c8d';
                 token.textContent = char.name.charAt(0);
-                token.title = char.name;
+                token.title = `${char.name} (${char.status || 'IDLE'})`;
                 container.appendChild(token);
             }
         }
     });
 }
 
-// Update UI elements
+/**
+ * Orchestrates the full UI refresh cycle.
+ */
 function updateUI() {
     turnCount.textContent = state.turn;
-    updateAgentPositions();
-    renderEvents();
+    updateAgentTokens();
+    renderEventLog();
 }
 
-// Render event log
-function renderEvents() {
+/**
+ * Renders the chronological event log into the side panel.
+ * Supports different styling for Dialogue, Movement, and System events.
+ */
+function renderEventLog() {
     eventLog.innerHTML = '';
 
     state.events.forEach(event => {
         const item = document.createElement('div');
-        item.className = `event-item ${event.action === '说话' ? 'dialogue' : event.action === '移动' ? 'move' : ''}`;
+        const isDialogue = ['说话', '开始说话', '结束说话', '继续说话'].includes(event.action);
+        const isMove = ['移动', '开始移动', '结束移动'].includes(event.action);
+
+        item.className = `event-item ${isDialogue ? 'type-dialogue' : isMove ? 'type-move' : 'type-system'}`;
 
         const actor = event.actor || 'System';
         const args = event.args || {};
 
-        let content = '';
-        if (event.action === '说话') {
-            const target = args['目标'] || '';
-            const text = args['内容'] || '';
-            content = `对 ${target} 说: "${text}"`;
-        } else if (event.action === '移动') {
-            const newLoc = event.new_location || args['方向'] || '';
-            content = `移动 → ${newLoc}`;
-        } else if (event.action === '查看地图') {
-            content = '查看了地图';
-        } else if (event.action === '保持沉默') {
-            content = '保持沉默';
+        let actionDescription = '';
+        if (isDialogue) {
+            const target = args['目标'] || event.target_override || 'Unknown';
+            const message = args['内容'] || '';
+
+            if (event.action === '开始说话') {
+                actionDescription = `Initiated dialogue with <b>${target}</b>`;
+            } else if (event.action === '结束说话') {
+                actionDescription = `Concluded dialogue with <b>${target}</b>`;
+            } else {
+                actionDescription = `To <b>${target}</b>: "${message}"`;
+            }
+        } else if (isMove) {
+            const destination = event.new_location || args['方向'] || 'Unknown';
+            if (event.action === '开始移动') {
+                actionDescription = `Preparing for departure...`;
+            } else if (event.action === '结束移动') {
+                actionDescription = `Halted movement.`;
+            } else {
+                actionDescription = `Traveling to <b>${destination}</b>`;
+            }
         } else {
-            content = event.action;
+            actionDescription = event.action === '查看地图' ? 'Browsed world map.' : event.action;
         }
 
-        const inner = args['内心'] || '';
+        const innerThought = args['内心'] || '';
 
         item.innerHTML = `
-            <div class="event-actor">${actor}</div>
-            <div class="event-content">${content}</div>
-            ${inner ? `<div class="event-thought">(${inner})</div>` : ''}
+            <div class="event-meta">
+                <span class="actor-tag" style="color:${agentColors[actor] || '#666'}">${actor}</span>
+            </div>
+            <div class="event-body">${actionDescription}</div>
+            ${innerThought ? `<div class="event-concept">💭 ${innerThought}</div>` : ''}
         `;
 
         eventLog.appendChild(item);
     });
 
-    // Scroll to bottom
+    // Auto-scroll to the latest activity
     eventLog.scrollTop = eventLog.scrollHeight;
 }
 
 
+// --- User Interaction Hooks ---
 
-// Event Listeners
 startBtn.addEventListener('click', async () => {
     if (!state.running) {
         state.running = true;
         startBtn.textContent = '⏸ Running';
+        startBtn.disabled = true; // For this demo, we auto-step once on start
         stepBtn.disabled = false;
         resetBtn.disabled = false;
         await stepSimulation();
@@ -222,5 +267,5 @@ startBtn.addEventListener('click', async () => {
 stepBtn.addEventListener('click', stepSimulation);
 resetBtn.addEventListener('click', resetSimulation);
 
-// Initialize on load
+// Global entry point
 document.addEventListener('DOMContentLoaded', init);

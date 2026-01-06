@@ -1,8 +1,9 @@
 """
-World Loader - Initializes the game world from configuration files.
+Multi-Agent Simulation - World Loader
 
-This module handles the "boot" process of loading maps, characters,
-and setting up the initial game state from config files.
+This module manages the instantiation and bootstrap process of the simulation.
+It coordinates the reading of configuration files to build the GameCore,
+spawn characters, and initialize the GameState.
 """
 
 import json
@@ -13,14 +14,14 @@ from Engine.character import Character
 
 
 class WorldLoader:
-    """Loads and initializes a game world from configuration."""
+    """
+    Orchestrates the loading of a simulation environment from structured JSON configurations.
+    """
     
     def __init__(self, world_config_path: str = "Configs/world_setup.json"):
         """
-        Initialize the world loader.
-        
         Args:
-            world_config_path: Path to the world setup configuration file
+            world_config_path: Path to the master world setup file.
         """
         self.world_config_path = world_config_path
         self.world_config: dict = {}
@@ -29,120 +30,104 @@ class WorldLoader:
         self.characters: list[Character] = []
     
     def load_world_config(self) -> dict:
-        """Load the world setup configuration file.
-        
-        Returns:
-            Dictionary containing world configuration
+        """
+        Reads the primary configuration file from disk.
         """
         with open(self.world_config_path, 'r', encoding='utf-8') as f:
             self.world_config = json.load(f)
         return self.world_config
     
     def initialize_game_core(self) -> GameCore:
-        """Initialize the game core with the map from config.
-        
-        Returns:
-            Initialized GameCore instance
         """
-        map_config_path = self.world_config.get('map_config', 'Configs/map/map.json')
-        self.game_core = GameCore(map_config_path=map_config_path)
+        Instantiates the GameCore and initializes the map geometry.
+        """
+        map_path = self.world_config.get('map_config', 'Configs/map/map.json')
+        self.game_core = GameCore(map_config_path=map_path)
         self.game_core.initialize()
         return self.game_core
     
     def load_characters(self) -> list[Character]:
-        """Load all characters specified in the world config.
-        
-        Returns:
-            List of loaded Character instances
+        """
+        Instantiates characters based on the registry in the world config.
         """
         character_configs = self.world_config.get('characters', [])
         self.characters = []
         
-        for char_config in character_configs:
-            config_path = char_config.get('config_path')
-            if not config_path:
-                print(f"Warning: Character config missing 'config_path': {char_config}")
+        for char_entry in character_configs:
+            path = char_entry.get('config_path')
+            if not path:
+                print(f"Boot Warning: Character entry is missing 'config_path'. Skipping entry: {char_entry}")
                 continue
             
             try:
-                character = Character(config_path)
+                character = Character(path)
                 self.characters.append(character)
-                print(f"Loaded character: {character.name} (ID: {character.id}) at {character.current_location}")
+                print(f"✓ Character Spawning: {character.name} (UID: {character.id}) at {character.current_location}")
             except Exception as e:
-                print(f"Error loading character from {config_path}: {e}")
+                print(f"❌ Spawning Error: Failed to load character at {path}. Error: {e}")
         
         return self.characters
     
     def setup_game_state(self) -> GameState:
-        """Create and initialize the game state.
-        
-        Returns:
-            Initialized GameState instance
+        """
+        Finalizes initialization by registering characters with the core and creating the GameState.
         """
         if self.game_core is None:
-            raise RuntimeError("GameCore must be initialized before setting up GameState")
+            raise RuntimeError("Sequence Error: GameCore must be initialized before GameState.")
         
-        # Add all loaded characters to the game core
+        # Merge characters into the engine's registry
         self.game_core.add_characters(self.characters)
         
-        # Create game state
+        # Instantiate the state manager
         self.game_state = GameState(self.game_core)
         
         return self.game_state
     
     def load_world(self) -> tuple[GameCore, GameState, list[Character]]:
-        """Complete world loading process.
+        """
+        Executes the full automated boot sequence.
         
-        This is the main entry point that handles the full initialization:
-        1. Load world configuration
-        2. Initialize game core and map
-        3. Load and spawn all characters
-        4. Set up game state
+        Workflow:
+        1. Parse world configuration mapping.
+        2. Resolve and load map geometry.
+        3. Instantiate and register all characters.
+        4. Initialize the interaction state manager.
         
         Returns:
-            Tuple of (GameCore, GameState, list of Characters)
+            Tuple: (GameCore, GameState, list[Character])
         """
-        print(f"Loading world from: {self.world_config_path}")
+        print(f"Initiating boot sequence from: {self.world_config_path}")
         
-        # Step 1: Load world config
         config = self.load_world_config()
-        print(f"World: {config.get('world_name', 'Unnamed')}")
+        print(f"Current World: {config.get('world_name', 'Simulation Alpha')}")
         
-        # Step 2: Initialize game core with map
         game_core = self.initialize_game_core()
-        print(f"Map loaded with {len(game_core.game_map)} locations")
+        print(f"Map resolution complete. {len(game_core.game_map)} locations indexed.")
         
-        # Step 3: Load characters
         characters = self.load_characters()
-        print(f"Loaded {len(characters)} characters")
+        print(f"Lifeform population complete. {len(characters)} entities online.")
         
-        # Step 4: Setup game state
         game_state = self.setup_game_state()
-        print("Game state initialized")
+        print("System Phase: GameState operational.")
         
-        print("World loading complete!")
+        print("Simulation environment is READY.")
         return game_core, game_state, characters
 
 
 def load_world(world_config_path: str = "Configs/world_setup.json") -> tuple[GameCore, GameState, list[Character]]:
-    """Convenience function to load a world.
-    
-    Args:
-        world_config_path: Path to the world setup configuration file
-        
-    Returns:
-        Tuple of (GameCore, GameState, list of Characters)
+    """
+    Convenience wrapper to quickly boot the simulation using a functional interface.
     """
     loader = WorldLoader(world_config_path)
     return loader.load_world()
 
 
-# Example usage
+# --- CLI Test Interface ---
 if __name__ == "__main__":
     game_core, game_state, characters = load_world()
     
-    print("\n=== World Status ===")
-    print(f"Locations: {game_core.get_locations()}")
-    print("\nCharacters:")
+    print("\n[ ENVIROMENT STATUS ]")
+    print(f"Physical Clusters: {game_core.get_locations()}")
+    print("\n[ ENTITY MANIFEST ]")
     for char in characters:
-        print(f"  - {char.name} at {char.current_location}")
+        print(f"  • {char.name:<10} Location: {char.current_location}")

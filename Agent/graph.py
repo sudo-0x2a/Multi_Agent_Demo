@@ -9,40 +9,52 @@ from Engine.character import Character
 from Engine.state_manager import GameState
 from Agent.utils import ACTION_REGISTRY, format_system_prompt, generate_system_feedback
 
+# --- Global LLM Configuration ---
+# Using Grok-4-1-fast for high-performance agent reasoning.
 llm = ChatXAI(model="grok-4-1-fast", temperature=0.8)
 
 class AgentState(MessagesState):
+    """Extends the base MessagesState to include the dynamic system prompt."""
     system_prompt: str
 
 class NPCAgent:
     """
-    NPC Agent with 3-stage workflow:
-    1. Preprocessing: Get states from engine, prepare schemas, build system prompt
-    2. Model Call: Get structured output from LLM
-    3. Post Processing: Upload states back to engine
+    Implements a cognitive controller for an NPC using a 3-stage LangGraph workflow.
     
-    Uses LangGraph's InMemorySaver for conversation memory management.
-    Each agent has its own memory thread based on character ID.
+    Stages:
+    1. Preprocessing: Syncs with the game engine, prepares environmental context, 
+       and builds the dynamic system prompt including character memories.
+    2. Generation: Constrains the LLM to provide structured output based on 
+       actions currently available to the character in their specific context.
+    3. Postprocessing: Executes the LLM's chosen action in the game engine 
+       and handles secondary feedback loops.
     """
-    def __init__(self, character: Character, game_state: GameState) :
+    
+    def __init__(self, character: Character, game_state: GameState):
         self.character = character
         self.game_state = game_state
-        # Set this character as active in the game state
+        
+        # Initial context synchronization
         self.game_state.set_active_character(character.name)
         self.system_prompt = character.background
-        self.checkpointer = InMemorySaver()  # Memory management for this agent
-        # Cursor to avoid repeating old engine events (e.g., old dialogues) in system feedback.
+        
+        # Memory persistence across calls
+        self.checkpointer = InMemorySaver()
+        
+        # Tracks the last processed event index to ensure system feedback only includes NEW sensory data.
         self._last_event_index_seen: int = 0
+        
+        # Compile the state machine
         self.graph = self._build_graph()
     
-    def _preprocessing_node(self, state: AgentState) -> Command:
-        """Prepare system prompt with memory context."""
-
-        # Ensure the engine state is pointing at *this* agent before reading options.
-        # GameState is shared across agents.
+    def _preprocessing_node(self, state: AgentState) -> dict:
+        """
+        Gathers environmental data and memory to construct a comprehensive system prompt.
+        """
+        # Ensure thread safety by asserting the character context in the shared game_state.
         self.game_state.set_active_character(self.character.name)
         
-        # Load and format system prompt with memory and location context
+        # Combine static background with dynamic memories and location status.
         memory_data = self.character.load_memory()
         system_prompt = format_system_prompt(
             memory_data=memory_data,
@@ -50,20 +62,19 @@ class NPCAgent:
             current_location=self.character.current_location
         )
         
-        # Handle system prompt
-        return {
-            "system_prompt": system_prompt,
-        }
+        return {"system_prompt": system_prompt}
 
     def _generation_node(self, state: AgentState) -> dict:
-        """Call LLM with structured output schema"""
-        # Ensure the engine state is pointing at *this* agent before reading options.
+        """
+        Resolves valid actions, builds a dynamic schema, and calls the LLM.
+        """
         self.game_state.set_active_character(self.character.name)
 
-        # 1. Get available actions for current character state
+        # 1. Identify which actions are legally possible in the current world state.
         available_actions = self.game_state.get_action_options()
         
-        # 2. Build dynamic schemas for each available action
+        # 2. Build dynamic Pydantic models for the LLM's structured output.
+        # This handles dynamic options (e.g., list of characters nearby).
         action_schemas = {}
         for action_name in available_actions:
             action_def = ACTION_REGISTRY.get(action_name)
@@ -72,126 +83,96 @@ class NPCAgent:
                     schema = action_def.build_schema(self.game_state)
                     action_schemas[action_name] = schema
                 except RuntimeError:
-                    # Skip actions with empty dynamic options (e.g., no characters to talk to)
+                    # Occurs if an action target list is empty (e.g., no one to talk to).
                     continue
         
         if not action_schemas:
-            raise ValueError("No action schemas available")
+            raise ValueError(f"State Error: {self.character.name} has no valid action schemas at this moment.")
         
-        # Build unified schema with discriminator
+        # 3. Construct a Discriminated Union of all possible action schemas.
         if len(action_schemas) == 1:
-            # Single schema - use directly
             union_schema = list(action_schemas.values())[0]
         else:
-            # Multiple schemas - create discriminated union
-            # The schemas already have the action name embedded in their structure
-            # Create a Union of all action schemas
             schema_tuple = tuple(action_schemas.values())
             union_type = Union[schema_tuple]
             
-            # Wrap with Annotated for discriminator (the action schemas should have a discriminator field)
-            # For our case, we'll create a wrapper model that contains the action
+            # Wrap the union in a selection model for the LLM.
             union_schema = create_model(
-                'AgentAction',
-                action=(union_type, PydanticField(description="选择要执行的动作"))
+                'AgentActionSelection',
+                action=(union_type, PydanticField(description="选择当前环境下最合理的行动"))
             )
         
-        # Configure LLM with structured output
+        # 4. Configure LLM for structured output targeting our dynamic schema.
         structured_llm = llm.with_structured_output(union_schema)
         
-        # Generate system feedback to prompt the agent
-        # Use self.game_state instead of state.get('game_state') to avoid serialization issues
-        full_event_log = getattr(self.game_state.game, "event_log", None)
-        if isinstance(full_event_log, list):
-            new_events = full_event_log[self._last_event_index_seen :]
-            self._last_event_index_seen = len(full_event_log)
-        else:
-            new_events = None
+        # 5. Generate sensory feedback (System Notify) from the engine's event log.
+        full_event_log = getattr(self.game_state.game, "event_log", [])
+        new_events = full_event_log[self._last_event_index_seen :]
+        self._last_event_index_seen = len(full_event_log)
 
-        system_feedback = generate_system_feedback(
-            self.game_state,
-            event_log=new_events,
-        )
+        system_feedback = generate_system_feedback(self.game_state, event_log=new_events)
         
-        # Get structured output from LLM using current messages + system feedback
-        # Include system prompt as the first message, followed by conversation history and new feedback
+        # 6. Compose the message history and invoke the LLM.
         system_prompt = state.get('system_prompt', '')
-        
-        # Create the feedback message
         feedback_message = HumanMessage(content=system_feedback)
         
         messages = [SystemMessage(content=system_prompt)] + list(state.get('messages', [])) + [feedback_message]
         
-        # Get structured output from LLM
         structured_output = structured_llm.invoke(messages)
         
-        # If using wrapper model, extract the action
+        # Unwrap the selection model if necessary.
         if hasattr(structured_output, 'action'):
             structured_output = structured_output.action
         
-        # Create an AIMessage with the structured output
-        ai_message = AIMessage(content=str(structured_output), additional_kwargs={"structured_output": structured_output})
+        # Encapsulate the structured choice in an AIMessage for history tracking.
+        ai_message = AIMessage(
+            content=str(structured_output), 
+            additional_kwargs={"structured_output": structured_output}
+        )
         
-        # Now we return both the feedback (sensory input) and the AI's response
-        # so they both appear in the conversation history log.
         return {"messages": [feedback_message, ai_message]}
 
     def _postprocessing_node(self, state: AgentState) -> dict:
-        """Apply structured output back to game state"""
-        # Ensure the engine state is pointing at *this* agent before applying actions.
+        """
+        Translates the LLM's structured intention into engine commands.
+        """
         self.game_state.set_active_character(self.character.name)
 
-        # Get the last assistant message which contains the structured output
         messages = state.get('messages', [])
         
-        # Find the last AIMessage (assistant message)
+        # Retrieve the latest decision from the AI.
         last_ai_message = None
         for message in reversed(messages):
             if isinstance(message, AIMessage):
                 last_ai_message = message
                 break
         
-        if last_ai_message is None:
-            raise ValueError("No assistant message found")
+        if last_ai_message is None or 'structured_output' not in last_ai_message.additional_kwargs:
+            raise ValueError("Logic Error: Missing structured AI output in state history.")
         
-        # Extract structured output from additional_kwargs
-        structured_output = last_ai_message.additional_kwargs.get('structured_output')
-        if structured_output is None:
-            raise ValueError("No structured output found in assistant message")
+        structured_output = last_ai_message.additional_kwargs['structured_output']
         
-        # Convert structured output to the expected format for apply_action
-        # The structured output should be a Pydantic model with action and args
+        # Format the Pydantic model back into a raw dictionary for the GameState.
         action_data = structured_output.model_dump() if hasattr(structured_output, 'model_dump') else structured_output
-        
-        # Extract action name from the discriminator field "行动类型"
         action_name = action_data.get("行动类型")
-        if not action_name:
-            raise ValueError(f"No action type found in structured output: {action_data}")
-        
-        # Extract arguments (all fields except the discriminator)
         args = {k: v for k, v in action_data.items() if k != "行动类型"}
         
-        # Format for apply_action: {"action": str, "args": dict}
-        formatted_output = {
-            "action": action_name,
-            "args": args
-        }
+        formatted_output = {"action": action_name, "args": args}
         
-        # Apply action to game state and get feedback
+        # Commit the action to the world engine.
         feedback = self.game_state.apply_action(formatted_output)
         
-        # If no feedback (e.g. transparent actions like speaking), don't add message
         if not feedback:
             return {"messages": []}
 
-        # Add feedback as a system feedback to conversation history
-        feedback_message = HumanMessage(content=f"系统反馈：{feedback}")
-        
-        # With add_messages annotation, this feedback will be appended to the conversation
-        return {"messages": [feedback_message]}
+        # Record the outcome as system feedback in the character's cognitive history.
+        outcome_message = HumanMessage(content=f"系统反馈：{feedback}")
+        return {"messages": [outcome_message]}
 
     def _build_graph(self):
-        """Build the 3-stage workflow graph with memory management"""
+        """
+        Constructs the cyclic state machine for the agent workflow.
+        """
         builder = StateGraph(AgentState)
         
         builder.add_node("preprocess", self._preprocessing_node)
@@ -203,18 +184,13 @@ class NPCAgent:
         builder.add_edge("generate", "postprocess")
         builder.add_edge("postprocess", END)
         
-        # Compile the graph - checkpointer must be passed during compile for persistence
         return builder.compile(checkpointer=self.checkpointer)
 
     def draw_graph(self) -> str:
         """
-        Generate and return the Mermaid graph representation of the agent workflow.
-
-        Returns:
-            str: Mermaid diagram text that can be rendered or saved
+        Returns a Mermaid diagram representation of the internal cognitive architecture.
         """
         try:
-            mermaid_graph = self.graph.get_graph().draw_mermaid()
-            return mermaid_graph
+            return self.graph.get_graph().draw_mermaid()
         except Exception as e:
-            return f"Error generating graph: {str(e)}"
+            return f"Mermaid Generation Error: {str(e)}"

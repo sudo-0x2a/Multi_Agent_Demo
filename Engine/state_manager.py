@@ -2,160 +2,175 @@ from .core import GameCore
 from .character import Character
 
 class GameState:
+    """
+    Manages transient state and interaction logic for characters within the GameCore.
+    Acts as the primary interface for agents to perceive and interact with the world.
+    """
+    
     def __init__(self, game: GameCore):
         self.game = game
         self._active_character_name: str | None = None
 
     def set_active_character(self, character_name: str) -> None:
-        # Validate existence early (strict behavior).
+        """Sets the context for subsequent queries and actions."""
+        # Verification ensures only valid characters are targeted.
         self.game.get_character_by_name(character_name)
         self._active_character_name = character_name
 
     @property
     def active_character(self) -> Character:
+        """Returns the character object currently in focus."""
         if self._active_character_name is None:
-            raise RuntimeError("Active character is not set")
+            raise RuntimeError("Context Error: No active character has been set for the GameState.")
         return self.game.get_character_by_name(self._active_character_name)
 
     def get_characters_options(self) -> list[str]:
-        """Return target character names available to the active character.
-
-        Demo rule: only characters in the same location, excluding self.
+        """
+        Calculates a list of other characters present at the active character's location.
+        Used to populate dialogue or interaction targets.
         """
         actor = self.active_character
         if actor.current_location is None:
-            raise ValueError("Active character has no current_location")
+            raise ValueError(f"State Error: Character {actor.name} has no valid location.")
 
+        # Logic: Characters must be in the same physical space to interact.
         options: list[str] = []
         for c in self.game.get_characters():
             if c.id == actor.id:
                 continue
-            if c.current_location != actor.current_location:
-                continue
-            options.append(c.name)
+            if c.current_location == actor.current_location:
+                options.append(c.name)
         return options
 
     def get_location_options(self) -> list[str]:
-        """Return destination location names for the active character."""
+        """
+        Returns all valid travel destinations excluding the character's current position.
+        """
         actor = self.active_character
         if actor.current_location is None:
-            raise ValueError("Active character has no current_location")
+            raise ValueError(f"State Error: Character {actor.name} has no valid location.")
 
         locations = self.game.get_locations()
-        options = [loc for loc in locations if loc != actor.current_location]
-        return options
+        return [loc for loc in locations if loc != actor.current_location]
     
     def get_direction_options(self) -> list[str]:
-        """Return available movement directions based on current location and map boundaries.
-        
-        Checks which directions (上/下/左/右) have valid locations to move to.
+        """
+        Calculates valid movement directions (UP/DOWN/LEFT/RIGHT) based on grid geometry.
+        Verifies if an adjacent cell on the map contains a registered location.
         """
         actor = self.active_character
         if actor.current_location is None:
-            raise ValueError("Active character has no current_location")
+            raise ValueError(f"State Error: Character {actor.name} has no valid location.")
         
         current_coords = self.game.get_location_coordinates(actor.current_location)
-        x, y = current_coords[0], current_coords[1]
+        x, y = current_coords
         
-        # Define direction mappings: direction -> coordinate change
+        # Grid direction vector mapping
         directions = {
-            "上": (0, 1),   # Moving up increases y
-            "下": (0, -1),  # Moving down decreases y
-            "左": (-1, 0),  # Moving left decreases x
-            "右": (1, 0),   # Moving right increases x
+            "上": (0, 1),   # North (+Y)
+            "下": (0, -1),  # South (-Y)
+            "左": (-1, 0),  # West (-X)
+            "右": (1, 0),   # East (+X)
         }
         
-        available_directions = []
-        for direction, (dx, dy) in directions.items():
-            new_x, new_y = x + dx, y + dy
-            # Check if there's a location at the new coordinates
-            if self.game.has_location_at_coordinates(new_x, new_y):
-                available_directions.append(direction)
+        available = []
+        for label, (dx, dy) in directions.items():
+            if self.game.has_location_at_coordinates(x + dx, y + dy):
+                available.append(label)
         
-        return available_directions
+        return available
 
     def get_action_options(self) -> list[str]:
-        """Return action names allowed given the current state.
-
-        Demo rule: allowed actions are derived from the actor's current location,
-        but modified by their current activity status.
+        """
+        Dynamic action resolution.
+        The available actions fluctuate based on the character's current 'activity_status'.
+        This implements a simple finite state machine for character behavior.
         """
         actor = self.active_character
         if actor.current_location is None:
-            raise ValueError("Active character has no current_location")
+            raise ValueError(f"State Error: Character {actor.name} has no valid location.")
 
-        # If actor is busy, they have specific options
+        # 1. Status-based overrides (Busy states)
         if actor.activity_status == "TALKING":
+            # While in a conversation, the character can only talk, leave, or look at their map.
             return ["说话", "结束说话", "查看地图"]
         elif actor.activity_status == "MOVING":
+            # While in movement mode, the character can move further or stop.
             return ["移动", "结束移动", "查看地图"]
 
-        # Default options from location
-        base_actions = list(self.game.action_rules_by_location[actor.current_location])
+        # 2. Location-based defaults (Idle states)
+        base_actions = list(self.game.action_rules_by_location.get(actor.current_location, []))
         
-        # Remap legacy names to start/stop variants
-        remapped_actions = []
+        # Remap entry-point actions to their specific "Start" variants for the UI/LLM.
+        remapped = []
         for action in base_actions:
             if action == "说话":
-                remapped_actions.append("开始说话")
+                remapped.append("开始说话")
             elif action == "移动":
-                remapped_actions.append("开始移动")
+                remapped.append("开始移动")
             else:
-                remapped_actions.append(action)
-        return remapped_actions
+                remapped.append(action)
+        return remapped
 
     def apply_action(self, structured_output: dict) -> str:
-        """Apply a structured action output for the active character.
-
-        Expected shape:
-            {"action": <str>, "args": <dict>}
+        """
+        The main state transition function.
+        Parses structured input from an agent and updates the world/character state.
         
+        Args:
+            structured_output: dict in format {"action": str, "args": dict}
+            
         Returns:
-            str: Feedback message describing the result of the action
+            str: Natural language feedback for the agent/user.
         """
         actor = self.active_character
         if not isinstance(structured_output, dict):
-            raise TypeError("structured_output must be a dict")
+            raise TypeError("System Error: Action input must be a dictionary.")
+            
         action = structured_output["action"]
-        args = structured_output["args"]
-        if not isinstance(args, dict):
-            raise TypeError("structured_output['args'] must be a dict")
+        args = structured_output.get("args", {})
 
-        allowed_actions = self.get_action_options()
-        if action not in allowed_actions:
-            # Fallback for legacy actions if they were somehow triggered
+        # Validation: Verify the action is legally permissible in the current state.
+        allowed = self.get_action_options()
+        if action not in allowed:
+            # Legacy/Shortcut mapping for robust handling
             if action == "说话": action = "开始说话"
             elif action == "移动": action = "开始移动"
             
-            if action not in allowed_actions:
-                raise ValueError(f"Action not allowed in current state: {action}")
+            if action not in allowed:
+                raise ValueError(f"Rule Violation: Action '{action}' is not permitted for {actor.name} right now.")
 
-        # --- Continuous Action Handlers ---
+        # --- Continuous State Transitions (FSM) ---
         
         if action == "开始说话":
             target = args["目标"]
             if target not in self.get_characters_options():
-                raise ValueError(f"Invalid target character: {target}")
+                raise ValueError(f"Target Error: {target} is not present at this location.")
             
             actor.activity_status = "TALKING"
             actor.activity_data = {"target": target}
             self.game.event_log.append({"actor": actor.name, "action": action, "args": args})
-            return f"你进入了与{target}的对话模式。请等待对方回应，或使用'说话'继续发送。"
+            return f"你进入了与 {target} 的对话模式。你可以开始‘说话’，或在完成后‘结束说话’。"
 
         if action == "说话":
             target = actor.activity_data.get("target")
-            content = args.get("内容", "")
-            # Log with target_override so system feedback can pick it up
+            # Ensure context for the event log
+            if target and "目标" not in args:
+                args["目标"] = target
+                
             self.game.event_log.append({
                 "actor": actor.name, 
                 "action": action, 
                 "args": args,
                 "target_override": target
             })
-            return ""
+            return "" # Transparent action (no direct system feedback needed)
 
         if action == "结束说话":
             target = actor.activity_data.get("target")
+            if target and "目标" not in args:
+                args["目标"] = target
+                
             actor.activity_status = "IDLE"
             actor.activity_data = {}
             self.game.event_log.append({
@@ -164,63 +179,58 @@ class GameState:
                 "args": args,
                 "target_override": target
             })
-            return f"你结束了与{target}的对话"
+            return f"你结束了与 {target} 的对话。"
 
         if action == "开始移动":
             actor.activity_status = "MOVING"
             actor.activity_data = {}
             self.game.event_log.append({"actor": actor.name, "action": action, "args": args})
-            return f"你进入了移动模式。请使用'移动'指令进行移动，或使'结束移动'退出模式。"
+            return "你进入了移动模式。请指定方向（上/下/左/右）进行移动。"
 
         if action == "移动":
             direction = args["方向"]
             if direction not in self.get_direction_options():
-                raise ValueError(f"Invalid move direction: {direction}")
+                raise ValueError(f"Movement Error: Cannot move '{direction}' from here.")
             
-            # Calculate new location based on direction and move immediately
-            current_coords = self.game.get_location_coordinates(actor.current_location)
-            x, y = current_coords[0], current_coords[1]
+            # Retrieve coordinates and resolve destination
+            coords = self.game.get_location_coordinates(actor.current_location)
+            delta = {"上": (0, 1), "下": (0, -1), "左": (-1, 0), "右": (1, 0)}[direction]
+            new_loc_name = self.game.get_location_name_at_coordinates(coords[0] + delta[0], coords[1] + delta[1])
             
-            direction_mapping = {"上": (0, 1), "下": (0, -1), "左": (-1, 0), "右": (1, 0)}
-            dx, dy = direction_mapping[direction]
-            new_x, new_y = x + dx, y + dy
+            if new_loc_name is None:
+                raise ValueError("Engine Error: Destination does not exist in world map.")
             
-            new_location = self.game.get_location_name_at_coordinates(new_x, new_y)
-            if new_location is None:
-                raise ValueError(f"No location found at coordinates ({new_x}, {new_y})")
+            actor.move(new_loc_name)
+            actor.activity_data["last_destination"] = new_loc_name
             
-            # Move the character immediately
-            actor.move(new_location)
-            # Update destination in activity data so we can report it on exit if needed (optional)
-            actor.activity_data["last_destination"] = new_location
-            
-            self.game.event_log.append({"actor": actor.name, "action": action, "args": args, "new_location": new_location})
-            return f"你向{direction}移动，到达了{new_location}"
+            self.game.event_log.append({"actor": actor.name, "action": action, "args": args, "new_location": new_loc_name})
+            return f"你向 {direction} 移动，到达了 {new_loc_name}。"
 
         if action == "结束移动":
-            last_destination = actor.activity_data.get("last_destination", actor.current_location)
+            final_loc = actor.activity_data.get("last_destination", actor.current_location)
             actor.activity_status = "IDLE"
             actor.activity_data = {}
             self.game.event_log.append({"actor": actor.name, "action": action, "args": args})
-            return f"你结束了移动模式，当前位置：{last_destination}"
+            return f"你停止了移动，目前的所在地是：{final_loc}。"
 
         # --- Discrete Action Handlers ---
 
         if action == "交易":
             target = args["目标"]
             if target not in self.get_characters_options():
-                raise ValueError(f"Invalid target character: {target}")
+                raise ValueError(f"Target Error: {target} is not here.")
             self.game.event_log.append({"actor": actor.name, "action": action, "args": args})
-            return f"你与{target}进行了交易"
+            return f"你与 {target} 成功发起了交易。"
         
         if action == "查看地图":
-            map_info = self.game.get_map_info()
-            self.game.event_log.append({"actor": actor.name, "action": action, "args": args, "map_info": map_info})
-            locations_list = ", ".join([f"{name}(坐标{coords})" for name, coords in map_info["locations"].items()])
-            return f"地图信息：共有{map_info['total_locations']}个地点 - {locations_list}"
+            info = self.game.get_map_info()
+            self.game.event_log.append({"actor": actor.name, "action": action, "args": args, "map_info": info})
+            loc_list = ", ".join([f"{n} ({c})" for n, c in info["locations"].items()])
+            return f"【卫星地图】目前已感知的地点：{loc_list}"
 
         if action in {"保持沉默", "睡觉"}:
-            self.game.event_log.append({"actor": actor.name, "action": action, "args": args})
-            return "你选择了保持沉默" if action == "保持沉默" else "你睡了一觉"
+            self.game_core_event = {"actor": actor.name, "action": action, "args": args}
+            self.game.event_log.append(self.game_core_event)
+            return "你默默地观察着周围。" if action == "保持沉默" else "你休息了一段时间。"
 
-        raise KeyError(f"Unknown action: {action}")
+        raise KeyError(f"Fatal Error: Action handler for '{action}' is not implemented.")

@@ -5,49 +5,55 @@ from typing import Any, Callable, Literal
 
 
 class ActionDefinition:
+    """
+    Defines the structure of an NPC action and provides logic to generate 
+    a dynamic Pydantic schema for LLM validation.
+    """
     def __init__(self, name: str, fields: dict):
         self.name = name
         self.fields = fields
     
     def build_schema(self, game_state: GameState):
-        """Build a Pydantic model with dynamic options resolved from engine state."""
-        # NOTE: use `Any` here to avoid fighting create_model's type stubs.
+        """
+        Constructs a Pydantic model at runtime. 
+        Dynamic fields (like interaction targets) are resolved using the current GameState.
+        """
         pydantic_fields: dict[str, Any] = {}
         
-        # Add discriminator field first - this is used to distinguish between different actions
-        # Use __getitem__ for single value Literal
-        pydantic_fields["行动类型"] = (Literal.__getitem__(self.name), Field(description="行动类型"))
+        # 1. Add the discriminator field to identify the action type.
+        pydantic_fields["行动类型"] = (Literal.__getitem__(self.name), Field(description="行动的唯一标识符"))
         
+        # 2. Iterate through fields and resolve types/options.
         for field_name, field_def in self.fields.items():
             description = field_def.get("description", "")
             
             if field_def.get("type") == "dynamic":
-                # Get options from engine state using the registered function
-                options_from = field_def.get("options_from")
-                options_fn = DYNAMIC_OPTIONS_REGISTRY.get(options_from)
-                if options_fn is None:
-                    raise KeyError(f"Unknown dynamic options resolver: {options_from}")
+                # Resolve the list of valid choices from the engine.
+                resolver_name = field_def.get("options_from")
+                resolver_fn = DYNAMIC_OPTIONS_REGISTRY.get(resolver_name)
+                
+                if resolver_fn is None:
+                    raise KeyError(f"Registry Error: Resolver '{resolver_name}' is not registered.")
 
-                options = options_fn(game_state)
+                options = resolver_fn(game_state)
                 if not options:
-                    raise RuntimeError(
-                        f"Dynamic options resolver returned empty list: {options_from}"
-                    )
+                    raise RuntimeError(f"Context Error: Resolver '{resolver_name}' returned no valid options.")
 
-                # Use Literal for dynamic options - compatible with structured output
-                # Need to use __getitem__ since options are runtime values
+                # Create a Literal type to constrain the LLM to specific engine-provided strings.
                 if len(options) == 1:
                     literal_type = Literal.__getitem__(options[0])
                 else:
                     literal_type = Literal.__getitem__(tuple(options))
                 pydantic_fields[field_name] = (literal_type, Field(description=description))
             else:
+                # Standard field (e.g., free text '内心' or '内容').
                 field_type = field_def.get("type", str)
                 pydantic_fields[field_name] = (field_type, Field(description=description))
 
         return create_model(f"{self.name}Action", **pydantic_fields)
 
 
+# Registry for functions that provide dynamic values for Pydantic Literals.
 DYNAMIC_OPTIONS_REGISTRY: dict[str, Callable[[GameState], list[str]]] = {
     "get_characters": GameState.get_characters_options,
     "get_locations": GameState.get_location_options,
@@ -56,205 +62,138 @@ DYNAMIC_OPTIONS_REGISTRY: dict[str, Callable[[GameState], list[str]]] = {
 }
 
 
-# Master Action Registry - all possible actions NPCs can use
+# --- Master Action Registry ---
+# Defines the vocabulary of actions available to the agents.
+# Fields can be static types (str) or dynamic types resolved from the registry above.
 ACTION_REGISTRY: dict[str, ActionDefinition] = {
     "开始说话": ActionDefinition(
         name="开始说话",
         fields={
-            "目标": {
-                "description": "选择你要对话的对象",
-                "type": "dynamic",
-                "options_from": "get_characters",
-            },
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "目标": {"description": "选择你要对话的对象", "type": "dynamic", "options_from": "get_characters"},
+            "内心": {"description": "你此时的真实想法", "type": str}
         }
     ),
     "说话": ActionDefinition(
         name="说话",
         fields={
-            "内容": {
-                "description": "你说话的内容",
-                "type": str,
-            },
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内容": {"description": "你实际说出的话语", "type": str},
+            "内心": {"description": "你内心的潜台词", "type": str}
         }
     ),
     "结束说话": ActionDefinition(
         name="结束说话",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "对话结束时的心理状态", "type": str}
         }
     ),
     "开始移动": ActionDefinition(
         name="开始移动",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "出发前的动机", "type": str}
         }
     ),
     "移动": ActionDefinition(
         name="移动",
         fields={
-            "方向": {
-                "description": "选择你要移动的方向（上/下/左/右）",
-                "type": "dynamic",
-                "options_from": "get_directions",
-            },
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "方向": {"description": "移动的方向矢量", "type": "dynamic", "options_from": "get_directions"},
+            "内心": {"description": "对这段路程的感受", "type": str}
         }
     ),
     "结束移动": ActionDefinition(
         name="结束移动",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "到达目的地后的反馈", "type": str}
         }
     ),
     "查看地图": ActionDefinition(
         name="查看地图",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "检索信息时的想法", "type": str}
         }
     ),
     "保持沉默": ActionDefinition(
         name="保持沉默",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "为什么选择保持沉默", "type": str}
         }
     ),
     "交易": ActionDefinition(
         name="交易",
         fields={
-            "目标": {
-                "description": "选择你要交易的对象",
-                "type": "dynamic",
-                "options_from": "get_characters",
-            },
-            "内容": {
-                "description": "描述交易的具体内容",
-                "type": str,
-            },
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "目标": {"description": "与之交易的对象", "type": "dynamic", "options_from": "get_characters"},
+            "内容": {"description": "交易的物品或资源", "type": str},
+            "内心": {"description": "对这笔交易价值的评估", "type": str}
         }
     ),
     "睡觉": ActionDefinition(
         name="睡觉",
         fields={
-            "内心": {
-                "description": "你此时的内心想法",
-                "type": str,
-            }
+            "内心": {"description": "入睡前的最后念头", "type": str}
         }
     ),
 }
 
-# Context engineering: Format system prompt with memory and current status
+# --- Context Engineering ---
+
 def format_system_prompt(memory_data: list[dict], system_prompt: str = "", current_location: str | None = None) -> str:
-    """Format system prompt with memory data and current location status.
-    
-    Args:
-        memory_data: List of memory entries with 'time' and 'content' fields
-        system_prompt: The base system prompt to enhance (optional)
-        current_location: Current location of the character (optional)
-        
-    Returns:
-        The formatted system prompt with memory and location info injected.
+    """
+    Enriches the character's base personality with dynamic world context.
+    - Injects specific memories into marked <memory> tags.
+    - Appends current spatial status.
     """
     if not system_prompt:
         return ""
     
-    # Format new memory entries if provided
+    # 1. Memory Injection
     if memory_data:
         memory_lines = []
         for entry in memory_data:
-            time = entry.get("time", "某个时候")
+            time = entry.get("time", "某个时刻")
             content = entry.get("content", "")
             if content:
-                memory_lines.append(f"{time}：{content}")
+                memory_lines.append(f"【{time}】{content}")
         
-        formatted_new_memory = "\n".join(memory_lines)
+        formatted_memories = "\n".join(memory_lines)
         
-        # Inject memory into system prompt if <memory> tags exist
+        # Replace or insert into the <memory> block if it exists in the prompt template.
         if "<memory>" in system_prompt:
-            # Extract existing memory content from within <memory> tags
-            memory_match = re.search(r"<memory>(.*?)</memory>", system_prompt, flags=re.DOTALL)
-            if memory_match:
-                existing_memory = memory_match.group(1).strip()
-                # Combine existing and new memories
-                if existing_memory:
-                    combined_memory = f"{existing_memory}\n{formatted_new_memory}"
-                else:
-                    combined_memory = formatted_new_memory
+            match = re.search(r"<memory>(.*?)</memory>", system_prompt, flags=re.DOTALL)
+            if match:
+                existing = match.group(1).strip()
+                combined = f"{existing}\n{formatted_memories}" if existing else formatted_memories
             else:
-                combined_memory = formatted_new_memory
+                combined = formatted_memories
             
-            # Replace the memory section with combined content
-            memory_section = f"<memory>\n{combined_memory}\n</memory>"
-            system_prompt = re.sub(
-                r"<memory>.*?</memory>",
-                memory_section,
-                system_prompt,
-                flags=re.DOTALL
-            )
+            replacement = f"<memory>\n{combined}\n</memory>"
+            system_prompt = re.sub(r"<memory>.*?</memory>", replacement, system_prompt, flags=re.DOTALL)
     
-    # Add current location status if provided
+    # 2. Spatial Status Append
     if current_location:
-        location_info = f"\n\n<current_status>\nYou are currently at: {current_location}\n</current_status>"
-        system_prompt = system_prompt + location_info
+        status_info = f"\n\n--- 空间定位 ---\n你目前所在地点：{current_location}\n"
+        system_prompt += status_info
     
     return system_prompt
 
 
 def generate_system_feedback(game_state: GameState, event_log: list[dict] | None = None) -> str:
-    """Generate automated system feedback to prompt the agent.
-    
-    Format:
-    [环境信息]
-    当前位置：X
-    附近人物：X (or None)
-    
-    [对话] (Optional, appears if there are incoming messages)
-    Character: Content
+    """
+    Constructs a 'Sensory Input' report for the agent based on the world state.
+    Provides the LLM with information about their surroundings and any direct interactions.
     """
     actor = game_state.active_character
     
-    # [环境信息] section
-    nearby_characters = game_state.get_characters_options()
-    characters_str = "、".join(nearby_characters) if nearby_characters else "None"
+    # Segment 1: Environmental Sensing
+    nearby = game_state.get_characters_options()
+    nearby_str = "、".join(nearby) if nearby else "None"
     
-    feedback_lines = [
-        "[环境信息]",
-        f"当前位置：{actor.current_location}",
-        f"附近人物：{characters_str}"
+    feedback = [
+        "### 环境感知",
+        f"- **当前位置**: {actor.current_location}",
+        f"- **附近人物**: {nearby_str}"
     ]
     
-    # [对话] section - Check for incoming messages in the new event log
-    incoming_dialogues = []
+    # Segment 2: Dialogue Sensing (Parsing direct mentions in the event log)
+    incoming = []
     if event_log:
         for event in event_log:
             action = event.get("action", "")
@@ -262,20 +201,15 @@ def generate_system_feedback(game_state: GameState, event_log: list[dict] | None
             args = event.get("args", {}) or {}
             target = args.get("目标") or event.get("target_override")
             
-            # 1. Normal Dialogue
-            if action in ["说话", "开始说话", "继续说话"]:
-                content = args.get("内容", "")
-                if target == actor.name and content:
-                    incoming_dialogues.append(f"{actor_name}: {content}")
+            if action in ["说话", "开始说话", "继续说话"] and target == actor.name:
+                content = args.get("内容", "（对你发起了对话）")
+                incoming.append(f"> **{actor_name}** 对你说: {content}")
             
-            # 2. End Dialogue Notification
-            elif action == "结束说话":
-                if target == actor.name:
-                    incoming_dialogues.append(f"系统通知: {actor_name} 结束了与你的对话")
+            elif action == "结束说话" and target == actor.name:
+                incoming.append(f"> **系统提示**: {actor_name} 结束了与你的对话。")
     
-    if incoming_dialogues:
-        feedback_lines.append("")
-        feedback_lines.append("[对话]")
-        feedback_lines.extend(incoming_dialogues)
+    if incoming:
+        feedback.append("\n### 实时通信")
+        feedback.extend(incoming)
         
-    return "\n".join(feedback_lines)
+    return "\n".join(feedback)
