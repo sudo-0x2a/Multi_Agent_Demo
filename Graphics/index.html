@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Agent Demo</title>
+    <link rel="stylesheet" href="/Graphics/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎮 Multi-Agent Simulation</h1>
+            <div class="controls">
+                <button id="startBtn" class="btn btn-primary">▶ Start</button>
+                <button id="stepBtn" class="btn btn-secondary" disabled>⏩ Step</button>
+                <button id="resetBtn" class="btn btn-danger" disabled>🔄 Reset</button>
+            </div>
+            <div class="turn-display">Turn: <span id="turnCount">0</span></div>
+        </header>
+
+        <main class="main">
+            <section class="map-section">
+                <h2>World Map</h2>
+                <div id="mapGrid" class="map-grid"></div>
+                <div class="legend">
+                    <span class="legend-item"><span class="dot" style="background: #4CAF50;"></span> 小张</span>
+                    <span class="legend-item"><span class="dot" style="background: #E91E63;"></span> 小红</span>
+                </div>
+            </section>
+
+            <section class="log-section">
+                <h2>Event Log</h2>
+                <div id="eventLog" class="event-log"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/Graphics/script.js"></script>
+</body>
+
+</html>

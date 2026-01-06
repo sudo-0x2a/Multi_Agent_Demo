@@ -8,6 +8,8 @@ class Character:
         self.name: str
         self.background: str
         self.current_location: str | None = None
+        self.activity_status: str = "IDLE"  # IDLE, TALKING, MOVING
+        self.activity_data: dict = {}      # Data related to the current activity
         self._load_config()
 
     def _load_config(self):

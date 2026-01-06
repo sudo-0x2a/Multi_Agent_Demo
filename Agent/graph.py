@@ -116,7 +116,11 @@ class NPCAgent:
         # Get structured output from LLM using current messages + system feedback
         # Include system prompt as the first message, followed by conversation history and new feedback
         system_prompt = state.get('system_prompt', '')
-        messages = [SystemMessage(content=system_prompt)] + list(state.get('messages', [])) + [HumanMessage(content=system_feedback)]
+        
+        # Create the feedback message
+        feedback_message = HumanMessage(content=system_feedback)
+        
+        messages = [SystemMessage(content=system_prompt)] + list(state.get('messages', [])) + [feedback_message]
         
         # Get structured output from LLM
         structured_output = structured_llm.invoke(messages)
@@ -128,8 +132,9 @@ class NPCAgent:
         # Create an AIMessage with the structured output
         ai_message = AIMessage(content=str(structured_output), additional_kwargs={"structured_output": structured_output})
         
-        # With add_messages annotation, these messages will be appended to the conversation
-        return {"messages": [HumanMessage(content=system_feedback), ai_message]}
+        # Now we return both the feedback (sensory input) and the AI's response
+        # so they both appear in the conversation history log.
+        return {"messages": [feedback_message, ai_message]}
 
     def _postprocessing_node(self, state: AgentState) -> dict:
         """Apply structured output back to game state"""
@@ -175,6 +180,10 @@ class NPCAgent:
         # Apply action to game state and get feedback
         feedback = self.game_state.apply_action(formatted_output)
         
+        # If no feedback (e.g. transparent actions like speaking), don't add message
+        if not feedback:
+            return {"messages": []}
+
         # Add feedback as a system feedback to conversation history
         feedback_message = HumanMessage(content=f"系统反馈：{feedback}")
         

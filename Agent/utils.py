@@ -58,18 +58,45 @@ DYNAMIC_OPTIONS_REGISTRY: dict[str, Callable[[GameState], list[str]]] = {
 
 # Master Action Registry - all possible actions NPCs can use
 ACTION_REGISTRY: dict[str, ActionDefinition] = {
-    "说话": ActionDefinition(
-        name="说话",
+    "开始说话": ActionDefinition(
+        name="开始说话",
         fields={
             "目标": {
                 "description": "选择你要对话的对象",
                 "type": "dynamic",
                 "options_from": "get_characters",
             },
+            "内心": {
+                "description": "你此时的内心想法",
+                "type": str,
+            }
+        }
+    ),
+    "说话": ActionDefinition(
+        name="说话",
+        fields={
             "内容": {
                 "description": "你说话的内容",
                 "type": str,
             },
+            "内心": {
+                "description": "你此时的内心想法",
+                "type": str,
+            }
+        }
+    ),
+    "结束说话": ActionDefinition(
+        name="结束说话",
+        fields={
+            "内心": {
+                "description": "你此时的内心想法",
+                "type": str,
+            }
+        }
+    ),
+    "开始移动": ActionDefinition(
+        name="开始移动",
+        fields={
             "内心": {
                 "description": "你此时的内心想法",
                 "type": str,
@@ -84,6 +111,15 @@ ACTION_REGISTRY: dict[str, ActionDefinition] = {
                 "type": "dynamic",
                 "options_from": "get_directions",
             },
+            "内心": {
+                "description": "你此时的内心想法",
+                "type": str,
+            }
+        }
+    ),
+    "结束移动": ActionDefinition(
+        name="结束移动",
+        fields={
             "内心": {
                 "description": "你此时的内心想法",
                 "type": str,
@@ -194,57 +230,52 @@ def format_system_prompt(memory_data: list[dict], system_prompt: str = "", curre
     return system_prompt
 
 
-# Auto generate feedback from the system
 def generate_system_feedback(game_state: GameState, event_log: list[dict] | None = None) -> str:
     """Generate automated system feedback to prompt the agent.
     
-    This feedback is sent as a user message and informs the agent
-    about their current state, prompting them to take action.
+    Format:
+    [环境信息]
+    当前位置：X
+    附近人物：X (or None)
     
-    Args:
-        game_state: Current game state
-        event_log: Optional event log to extract recent dialogue
-        
-    Returns:
-        Formatted system feedback string
+    [对话] (Optional, appears if there are incoming messages)
+    Character: Content
     """
     actor = game_state.active_character
-    if actor.current_location is None:
-        return "系统：你需要选择一个起始位置"
     
-    # Get nearby characters at the same location
+    # [环境信息] section
     nearby_characters = game_state.get_characters_options()
+    characters_str = "、".join(nearby_characters) if nearby_characters else "None"
     
-    # Build feedback message with location and nearby characters
-    feedback = f"系统：你当前在{actor.current_location}"
+    feedback_lines = [
+        "[环境信息]",
+        f"当前位置：{actor.current_location}",
+        f"附近人物：{characters_str}"
+    ]
     
-    if nearby_characters:
-        characters_list = "、".join(nearby_characters)
-        feedback += f"，附近有{characters_list}"
-    
-    # Append incoming dialogue if event_log is provided.
-    # Format requested: "{character}: {content}".
+    # [对话] section - Check for incoming messages in the new event log
+    incoming_dialogues = []
     if event_log:
-        incoming_lines: list[str] = []
-        # Collect up to the last 5 messages addressed to this actor.
-        for event in reversed(event_log):
-            if event.get("action") != "说话":
-                continue
+        for event in event_log:
+            action = event.get("action", "")
             actor_name = event.get("actor")
             args = event.get("args", {}) or {}
-            target = args.get("目标")
-            content = args.get("内容", "")
-            if not (actor_name and target and content):
-                continue
-            if target != actor.name:
-                continue
-            if actor_name == actor.name:
-                continue
-            incoming_lines.append(f"{actor_name}: {content}")
-            if len(incoming_lines) >= 5:
-                break
-
-        if incoming_lines:
-            feedback += "\n\n系统：你刚刚收到消息\n" + "\n".join(reversed(incoming_lines))
-
-    return feedback
+            target = args.get("目标") or event.get("target_override")
+            
+            # 1. Normal Dialogue
+            if action in ["说话", "开始说话", "继续说话"]:
+                content = args.get("内容", "")
+                if target == actor.name and content:
+                    incoming_dialogues.append(f"{actor_name}: {content}")
+            
+            # 2. End Dialogue Notification
+            elif action == "结束说话":
+                if target == actor.name:
+                    incoming_dialogues.append(f"系统通知: {actor_name} 结束了与你的对话")
+    
+    if incoming_dialogues:
+        feedback_lines.append("")
+        feedback_lines.append("[对话]")
+        feedback_lines.extend(incoming_dialogues)
+        
+    return "\n".join(feedback_lines)
