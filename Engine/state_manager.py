@@ -53,6 +53,18 @@ class GameState:
         locations = self.game.get_locations()
         return [loc for loc in locations if loc != actor.current_location]
     
+    def get_items_in_location(self) -> list[str]:
+        """
+        Returns names of all items at the active character's current location.
+        Used to populate item interaction targets.
+        """
+        actor = self.active_character
+        if actor.current_location is None:
+            raise ValueError(f"State Error: Character {actor.name} has no valid location.")
+        
+        items = self.game.get_items_at_location(actor.current_location)
+        return [item.name for item in items]
+    
     def get_direction_options(self) -> list[str]:
         """
         Calculates valid movement directions (UP/DOWN/LEFT/RIGHT) based on grid geometry.
@@ -90,13 +102,22 @@ class GameState:
         if actor.current_location is None:
             raise ValueError(f"State Error: Character {actor.name} has no valid location.")
 
+        # Check if items exist at current location (物品交互 is always available when items exist)
+        items_here = self.get_items_in_location()
+        
         # 1. Status-based overrides (Busy states)
         if actor.activity_status == "TALKING":
             # While in a conversation, the character can only talk, leave, or look at their map.
-            return ["说话", "结束说话", "查看地图"]
+            actions = ["说话", "结束说话", "查看地图"]
+            if items_here:
+                actions.append("物品交互")
+            return actions
         elif actor.activity_status == "MOVING":
             # While in movement mode, the character can move further or stop.
-            return ["移动", "结束移动", "查看地图"]
+            actions = ["移动", "结束移动", "查看地图"]
+            if items_here:
+                actions.append("物品交互")
+            return actions
 
         # 2. Location-based defaults (Idle states)
         base_actions = list(self.game.action_rules_by_location.get(actor.current_location, []))
@@ -110,6 +131,11 @@ class GameState:
                 remapped.append("开始移动")
             else:
                 remapped.append(action)
+        
+        # Add item interaction if items exist at location
+        if items_here:
+            remapped.append("物品交互")
+        
         return remapped
 
     def apply_action(self, structured_output: dict) -> str:
@@ -227,6 +253,28 @@ class GameState:
             self.game.event_log.append({"actor": actor.name, "action": action, "args": args, "map_info": info})
             loc_list = ", ".join([f"{n} ({c})" for n, c in info["locations"].items()])
             return f"【卫星地图】目前已感知的地点：{loc_list}"
+
+        if action == "物品交互":
+            target_item_name = args["目标"]
+            items_at_location = self.game.get_items_at_location(actor.current_location)
+            
+            target_item = None
+            for item in items_at_location:
+                if item.name == target_item_name:
+                    target_item = item
+                    break
+            
+            if target_item is None:
+                raise ValueError(f"Item Error: {target_item_name} is not present at this location.")
+            
+            self.game.event_log.append({
+                "actor": actor.name, 
+                "action": action, 
+                "args": args,
+                "item_id": target_item.id,
+                "item_description": target_item.description
+            })
+            return f"【物品观察】{target_item.name}：{target_item.description}"
 
         if action in {"保持沉默", "睡觉"}:
             self.game_core_event = {"actor": actor.name, "action": action, "args": args}

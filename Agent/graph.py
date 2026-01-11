@@ -10,8 +10,8 @@ from Engine.state_manager import GameState
 from Agent.utils import ACTION_REGISTRY, format_system_prompt, generate_system_feedback
 
 # --- Global LLM Configuration ---
-# Using Grok-4-1-fast for high-performance agent reasoning.
-llm = ChatXAI(model="grok-4-1-fast", temperature=0.8)
+# Define LLM provider
+llm = ChatXAI(model="grok-4-1-fast-non-reasoning", temperature=0.8)
 
 class AgentState(MessagesState):
     """Extends the base MessagesState to include the dynamic system prompt."""

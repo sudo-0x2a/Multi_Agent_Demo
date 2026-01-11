@@ -1,6 +1,7 @@
 import json
 import os
 from .character import Character
+from .item import Item
 
 class GameCore:
     """
@@ -9,6 +10,7 @@ class GameCore:
     Responsibilities:
     - Managing the world map and location coordinates.
     - Maintaining the list of active characters.
+    - Managing items placed at locations.
     - Governing action availability based on environmental rules.
     - Providing a central event log for all world activities.
     """
@@ -16,6 +18,7 @@ class GameCore:
     def __init__(self, map_config_path: str = "Configs/map/map.json"):
         self.initialized = False
         self.characters: list[Character] = []
+        self.items: list[Item] = []
         
         # World Map: A mapping of location names to their [x, y] grid coordinates.
         self.game_map: dict[str, list[int]] = {}
@@ -56,6 +59,16 @@ class GameCore:
     def add_characters(self, characters: list[Character]):
         """Registers a list of character instances with the game engine."""
         self.characters.extend(characters)
+
+    def add_items(self, items: list[Item]):
+        """Registers a list of item instances with the game engine."""
+        self.items.extend(items)
+
+    def get_items_at_location(self, location: str) -> list[Item]:
+        """Returns all items placed at the specified location."""
+        if not self.initialized:
+            raise RuntimeError("GameCore must be initialized before accessing world data.")
+        return [item for item in self.items if item.location == location]
 
     def get_locations(self) -> list[str]:
         """Returns a list of all defined location names in the world."""

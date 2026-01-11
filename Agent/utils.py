@@ -59,6 +59,7 @@ DYNAMIC_OPTIONS_REGISTRY: dict[str, Callable[[GameState], list[str]]] = {
     "get_locations": GameState.get_location_options,
     "get_directions": GameState.get_direction_options,
     "get_actions": GameState.get_action_options,
+    "get_items": GameState.get_items_in_location,
 }
 
 
@@ -131,6 +132,13 @@ ACTION_REGISTRY: dict[str, ActionDefinition] = {
             "内心": {"description": "入睡前的最后念头", "type": str}
         }
     ),
+    "物品交互": ActionDefinition(
+        name="物品交互",
+        fields={
+            "目标": {"description": "选择要交互的物品", "type": "dynamic", "options_from": "get_items"},
+            "内心": {"description": "对这个物品的想法", "type": str}
+        }
+    ),
 }
 
 # --- Context Engineering ---
@@ -186,10 +194,14 @@ def generate_system_feedback(game_state: GameState, event_log: list[dict] | None
     nearby = game_state.get_characters_options()
     nearby_str = "、".join(nearby) if nearby else "None"
     
+    items = game_state.get_items_in_location()
+    items_str = "、".join(items) if items else "None"
+    
     feedback = [
         "### 环境感知",
         f"- **当前位置**: {actor.current_location}",
-        f"- **附近人物**: {nearby_str}"
+        f"- **附近人物**: {nearby_str}",
+        f"- **周围物品**: {items_str}"
     ]
     
     # Segment 2: Dialogue Sensing (Parsing direct mentions in the event log)

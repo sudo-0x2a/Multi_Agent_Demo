@@ -96,6 +96,14 @@ class SimulationState:
                 }
                 for c in self.characters
             ],
+            "items": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "location": item.location
+                }
+                for item in self.game_core.items
+            ],
             "events": list(self.game_core.event_log),
             "turn": self.turn,
             "complete": self.complete

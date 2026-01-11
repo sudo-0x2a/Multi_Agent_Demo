@@ -10,5 +10,19 @@
             "id": "npc_002",
             "config_path": "Configs/npcs/npc_002/npc_002.json"
         }
+    ],
+    "items": [
+        {
+            "config_path": "Configs/items/clock.json",
+            "location": "家"
+        },
+        {
+            "config_path": "Configs/items/tv.json",
+            "location": "家"
+        },
+        {
+            "config_path": "Configs/items/disinfectant.json",
+            "location": "医院"
+        }
     ]
 }

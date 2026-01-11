@@ -3,7 +3,7 @@ Multi-Agent Simulation - World Loader
 
 This module manages the instantiation and bootstrap process of the simulation.
 It coordinates the reading of configuration files to build the GameCore,
-spawn characters, and initialize the GameState.
+spawn characters, load items, and initialize the GameState.
 """
 
 import json
@@ -11,6 +11,7 @@ from typing import Optional
 from Engine.core import GameCore
 from Engine.state_manager import GameState
 from Engine.character import Character
+from Engine.item import Item
 
 
 class WorldLoader:
@@ -28,6 +29,7 @@ class WorldLoader:
         self.game_core: Optional[GameCore] = None
         self.game_state: Optional[GameState] = None
         self.characters: list[Character] = []
+        self.items: list[Item] = []
     
     def load_world_config(self) -> dict:
         """
@@ -68,15 +70,42 @@ class WorldLoader:
         
         return self.characters
     
+    def load_items(self) -> list[Item]:
+        """
+        Instantiates items based on the registry in the world config.
+        """
+        item_configs = self.world_config.get('items', [])
+        self.items = []
+        
+        for item_entry in item_configs:
+            path = item_entry.get('config_path')
+            location = item_entry.get('location')
+            
+            if not path:
+                print(f"Boot Warning: Item entry is missing 'config_path'. Skipping entry: {item_entry}")
+                continue
+            
+            try:
+                item = Item(path, location=location)
+                self.items.append(item)
+                print(f"✓ Item Spawning: {item.name} (UID: {item.id}) at {item.location}")
+            except Exception as e:
+                print(f"❌ Item Error: Failed to load item at {path}. Error: {e}")
+        
+        return self.items
+    
     def setup_game_state(self) -> GameState:
         """
-        Finalizes initialization by registering characters with the core and creating the GameState.
+        Finalizes initialization by registering characters and items with the core and creating the GameState.
         """
         if self.game_core is None:
             raise RuntimeError("Sequence Error: GameCore must be initialized before GameState.")
         
         # Merge characters into the engine's registry
         self.game_core.add_characters(self.characters)
+        
+        # Merge items into the engine's registry
+        self.game_core.add_items(self.items)
         
         # Instantiate the state manager
         self.game_state = GameState(self.game_core)
@@ -91,7 +120,8 @@ class WorldLoader:
         1. Parse world configuration mapping.
         2. Resolve and load map geometry.
         3. Instantiate and register all characters.
-        4. Initialize the interaction state manager.
+        4. Instantiate and register all items.
+        5. Initialize the interaction state manager.
         
         Returns:
             Tuple: (GameCore, GameState, list[Character])
@@ -106,6 +136,9 @@ class WorldLoader:
         
         characters = self.load_characters()
         print(f"Lifeform population complete. {len(characters)} entities online.")
+        
+        items = self.load_items()
+        print(f"Item population complete. {len(items)} objects placed.")
         
         game_state = self.setup_game_state()
         print("System Phase: GameState operational.")
@@ -131,3 +164,6 @@ if __name__ == "__main__":
     print("\n[ ENTITY MANIFEST ]")
     for char in characters:
         print(f"  • {char.name:<10} Location: {char.current_location}")
+    print("\n[ ITEM MANIFEST ]")
+    for item in game_core.items:
+        print(f"  • {item.name:<10} Location: {item.location}")
