@@ -210,7 +210,7 @@ function renderItems() {
             itemEl.className = 'item-token';
             itemEl.style.backgroundColor = itemColors[item.name] || '#607D8B';
             itemEl.title = item.name;
-            itemEl.textContent = item.name.charAt(0);
+            itemEl.textContent = item.name;
             itemContainer.appendChild(itemEl);
         });
     }
@@ -261,7 +261,7 @@ function updateAgentPositions() {
             agentEl.className = 'agent-wrapper';
             agentEl.innerHTML = `
                 <div class="agent-token" style="background-color: ${agentColors[char.name] || '#7f8c8d'}">
-                    ${char.name.charAt(0)}
+                    ${char.name}
                 </div>
             `;
             mapGrid.appendChild(agentEl);
